@@ -1,0 +1,177 @@
+"""
+ADDC Autonomous Drone Mission System
+
+Author: Anupam Nair
+
+Description:
+Simulation of an autonomous drone system designed for SAE ISS ADDC.
+Includes mission planning, payload handling, QR verification,
+obstacle avoidance, and return-to-home logic.
+"""
+
+import time
+import math
+import random
+
+def distance(a, b):
+    return math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2)
+
+class Drone:
+    def __init__(self):
+        self.pos = [0, 0, 0]
+        self.battery = 100
+        self.payload = False
+
+    def move(self, target):
+        for i in range(3):
+            if self.pos[i] < target[i]:
+                self.pos[i] += 1
+            elif self.pos[i] > target[i]:
+                self.pos[i] -= 1
+        self.battery -= 0.4
+
+    def status(self):
+        print(f"Drone Pos{tuple(self.pos)} | Battery:{self.battery:.1f}% | Payload:{self.payload}")
+
+class Sensors:
+    def detect_obstacle(self, current, target):
+        mid = [(current[i]+target[i])//2 for i in range(3)]
+        return mid if random.random() < 0.2 else None
+
+    def verify_qr(self):
+        return random.random() > 0.3
+
+class MissionPlanner:
+    def __init__(self, drone):
+        self.drone = drone
+        self.sensors = Sensors()
+
+        self.state = "INIT"
+        self.qr_attempts = 0
+
+        self.pickup = [5, 5, 3]
+        self.drop = [12, 10, 3]
+        self.base = [0, 0, 0]
+
+        self.log = []
+
+    def transition(self, new_state):
+        print(f"\n--- {self.state} → {new_state} ---\n")
+        self.state = new_state
+
+    def step(self):
+
+        if self.drone.battery < 15 and self.state not in ["RETURN", "LAND"]:
+            self.transition("RETURN")
+
+        self.log.append((self.state, tuple(self.drone.pos), self.drone.battery))
+
+        if self.state == "INIT":
+            self.transition("TAKEOFF")
+
+        elif self.state == "TAKEOFF":
+            self.drone.move([0,0,5])
+            if distance(self.drone.pos, [0,0,5]) < 1:
+                self.transition("NAV_PICKUP")
+
+        elif self.state == "NAV_PICKUP":
+            self.navigate(self.pickup)
+            if distance(self.drone.pos, self.pickup) < 1:
+                self.transition("PICK")
+
+        elif self.state == "PICK":
+            print("Picking payload...")
+            self.drone.payload = True
+            self.transition("NAV_DROP")
+
+        elif self.state == "NAV_DROP":
+            self.navigate(self.drop)
+            if distance(self.drone.pos, self.drop) < 1:
+                self.transition("QR_VERIFY")
+
+        elif self.state == "QR_VERIFY":
+            print("Scanning QR...")
+            if self.sensors.verify_qr():
+                print("QR Verified ✔")
+                self.transition("DROP")
+            else:
+                self.qr_attempts += 1
+                print(f"QR Failed ❌ Attempt {self.qr_attempts}")
+                if self.qr_attempts >= 3:
+                    print("QR Timeout → Forcing Drop")
+                    self.transition("DROP")
+
+        elif self.state == "DROP":
+            print("Dropping payload...")
+            self.drone.payload = False
+            self.transition("RETURN")
+
+        elif self.state == "RETURN":
+            self.navigate(self.base)
+            if distance(self.drone.pos, self.base) < 1:
+                self.transition("LAND")
+
+        elif self.state == "LAND":
+            self.drone.move([0,0,0])
+            if self.drone.pos[2] <= 0:
+                print("\nMISSION COMPLETE ✅")
+                self.save_log()
+                return True
+
+        return False
+
+    def navigate(self, target):
+        obstacle = self.sensors.detect_obstacle(self.drone.pos, target)
+
+        if obstacle:
+            print(f"Obstacle detected at {obstacle} → Avoiding")
+            self.drone.pos[1] += 1  # simple avoidance
+
+        self.drone.move(target)
+
+    def save_log(self):
+        with open("mission_log.txt", "w") as f:
+            for entry in self.log:
+                f.write(str(entry) + "\n")
+
+def manual_mode(drone):
+    print("\nManual Mode: w/a/s/d, q/e for altitude, x to exit")
+    while True:
+        cmd = input("Command: ")
+        if cmd == "x":
+            break
+        elif cmd == "w":
+            drone.pos[0] += 1
+        elif cmd == "s":
+            drone.pos[0] -= 1
+        elif cmd == "a":
+            drone.pos[1] += 1
+        elif cmd == "d":
+            drone.pos[1] -= 1
+        elif cmd == "q":
+            drone.pos[2] += 1
+        elif cmd == "e":
+            drone.pos[2] -= 1
+
+        drone.battery -= 0.2
+        drone.status()
+
+def main():
+    drone = Drone()
+    planner = MissionPlanner(drone)
+
+    mode = input("Select Mode (AUTO/MANUAL): ").lower()
+
+    if mode == "manual":
+        manual_mode(drone)
+    else:
+        print("\nADDC Autonomous Mission Started\n")
+        while True:
+            done = planner.step()
+            drone.status()
+            if done:
+                break
+            time.sleep(0.5)
+
+if __name__ == "__main__":
+    main()
